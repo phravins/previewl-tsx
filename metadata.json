@@ -1,0 +1,5 @@
+{
+  "name": "PreviewIt",
+  "description": "The ultra-fast workspace for developers to render, test, and convert code directly in the browser with hardware-accelerated precision.",
+  "requestFramePermissions": []
+}
