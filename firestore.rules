@@ -1,0 +1,110 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - Unique user ID
+    //   - email: string (required) - User email
+    //   - displayName: string (optional) - User display name
+    //   - photoURL: string (optional) - User photo URL
+    //   - createdAt: timestamp (required) - Creation time
+    //
+    // Collection: conversions
+    // Document ID: {conversionId}
+    // Fields:
+    //   - id: string (required) - Conversion ID
+    //   - userId: string (required) - Owner ID
+    //   - sourceFormat: string (required) - Input format
+    //   - targetFormat: string (required) - Output format
+    //   - inputCode: string (required) - Raw input
+    //   - outputCode: string (optional) - Converted output
+    //   - status: string (required) - 'success' | 'failed'
+    //   - errorMessage: string (optional) - Error details
+    //   - createdAt: timestamp (required) - Creation time
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             (data.displayName == null || (data.displayName is string && data.displayName.size() < 100)) &&
+             (data.photoURL == null || isValidUrl(data.photoURL)) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidConversion(data) {
+      return hasOnlyAllowedFields(['id', 'userId', 'sourceFormat', 'targetFormat', 'inputCode', 'outputCode', 'status', 'errorMessage', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.sourceFormat is string && data.sourceFormat.size() < 20 &&
+             data.targetFormat is string && data.targetFormat.size() < 20 &&
+             data.inputCode is string && data.inputCode.size() < 100000 &&
+             (data.outputCode == null || (data.outputCode is string && data.outputCode.size() < 100000)) &&
+             data.status in ['success', 'failed'] &&
+             (data.errorMessage == null || (data.errorMessage is string && data.errorMessage.size() < 1000)) &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false; // Users cannot delete their profiles via app
+    }
+
+    match /conversions/{conversionId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidConversion(request.resource.data);
+      allow update: if false; // Conversions are immutable history
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
